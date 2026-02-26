@@ -11,11 +11,26 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 // Default watchlist - slug prefixes from asuracomic.net/series/SLUG
 const DEFAULT_WATCHLIST = [
-  'i-killed-an-academy-player',
-  'the-player-hides-his-past',
-  'nano-machine',
-  'solo-leveling',
+  'crimson-reset',
+  'mount-hua-sects-genius-phantom-swordsman',
+  'the-extras-academy-survival-guide',
+  'infinite-mage',
+  'the-novels-extra-remake',
+  'pick-me-up-infinite-gacha',
   'omniscient-readers-viewpoint',
+  'what-a-bountiful-harvest-demon-lord',
+  'sword-devouring-swordmaster',
+  'myst-might-mayhem',
+  'eternally-regressing-knight',
+  'revenge-of-the-iron-blooded-sword-hound',
+  'reaper-of-the-drifting-moon',
+  'chronicles-of-the-lazy-sovereign',
+  'overgeared',
+  'killer-pietro',
+  'absolute-regression',
+  'solo-max-level-newbie',
+  'nano-machine',
+  'a-villains-will-to-survive',
 ];
 
 // got instance with HTTP/2 + realistic browser headers
@@ -180,7 +195,7 @@ app.get('/updates/esp32', async (req, res) => {
           ? req.query.watch.split(',').map(s => s.trim()).filter(Boolean)
           : DEFAULT_WATCHLIST);
 
-    const compact = filtered.slice(0, 8).map(e => ({
+    const compact = filtered.slice(0, 21).map(e => ({
       t:  e.title.substring(0, 22),
       c:  e.chapter.substring(0, 20),
       tm: e.time,
