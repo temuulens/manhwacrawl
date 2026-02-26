@@ -130,9 +130,9 @@ function parseUpdates(html) {
       const chapterPara = chapterLink.querySelector('p.w-\\[80px\\]');
       const chapterText = chapterPara ? chapterPara.text.trim() : chapterLink.text.trim();
 
-      // Time is in <p class="flex items-end ...text-zinc-500">
-      // Raw HTML: "Public in <!-- -->4.1<!-- --> hours" — strip HTML comments
-      const timePara = row.querySelector('p.text-zinc-500');
+      // Time is in <p class="flex items-end ...text-[12px] ...">
+      // Raw HTML: "Public in <!-- -->4.1<!-- --> hours" or "1 day ago"
+      const timePara = row.querySelector('p.text-\\[12px\\]') || row.querySelector('p.text-zinc-500') || row.querySelector('p.text-\\[#555555\\]');
       if (!timePara) continue;
 
       // node-html-parser gives us innerHTML with the <!-- --> still in it
@@ -165,8 +165,8 @@ function hoursAgo(timeText) {
   if (!m) return Infinity;
   const val = parseFloat(m[1]);
   if (m[2].startsWith('minute')) return val / 60;
-  if (m[2].startsWith('hour'))   return val;
-  if (m[2].startsWith('day'))    return val * 24;
+  if (m[2].startsWith('hour')) return val;
+  if (m[2].startsWith('day')) return val * 24;
   return Infinity;
 }
 
@@ -189,8 +189,8 @@ app.get('/updates', async (req, res) => {
     const watchlist = req.query.watch === 'all'
       ? null
       : (req.query.watch
-          ? req.query.watch.split(',').map(s => s.trim()).filter(Boolean)
-          : DEFAULT_WATCHLIST);
+        ? req.query.watch.split(',').map(s => s.trim()).filter(Boolean)
+        : DEFAULT_WATCHLIST);
 
     const filtered = watchlist
       ? all.filter(e => isRelevant(e, watchlist))
@@ -216,19 +216,19 @@ app.get('/updates/esp32', async (req, res) => {
     const watchlist = req.query.watch === 'all'
       ? null
       : (req.query.watch
-          ? req.query.watch.split(',').map(s => s.trim()).filter(Boolean)
-          : DEFAULT_WATCHLIST);
+        ? req.query.watch.split(',').map(s => s.trim()).filter(Boolean)
+        : DEFAULT_WATCHLIST);
 
     const filtered = watchlist
       ? all.filter(e => isRelevant(e, watchlist))
       : all;
 
     const compact = filtered.slice(0, 21).map(e => ({
-      t:  e.title.substring(0, 22),
-      c:  e.chapter.substring(0, 20),
+      t: e.title.substring(0, 22),
+      c: e.chapter.substring(0, 20),
       tm: e.time,
       // 1 = upcoming (not yet public), 2 = released (within 24 h)
-      u:  e.isUpcoming ? 1 : 2,
+      u: e.isUpcoming ? 1 : 2,
     }));
 
     res.json({ ok: 1, n: compact.length, d: compact });
