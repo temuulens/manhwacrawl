@@ -58,33 +58,79 @@ async function fetchHomepage() {
 function parseUpdates(html) {
   const root = parse(html);
 
-  // Each update card: div.grid.grid-rows-1.grid-cols-12.m-2
-  // Inside: series title link, then chapter rows with time
+  // Card structure (from raw HTML inspection):
+  //
+  // <div class="grid grid-rows-1 grid-cols-12 m-2">
+  //   <div class="col-span-3 ...">
+  //     <a href="/series/SLUG"><img .../></a>   ← first link, img only, NO text
+  //   </div>
+  //   <div class="col-span-9 ...">
+  //     <span class="text-[15px] font-medium ...">
+  //       <a href="/series/SLUG">Title Text</a>  ← second link, HAS text
+  //     </span>
+  //     <div class="flex flex-col gap-y-1.5 ...">
+  //       <span class="flex-1 inline-block mt-1">
+  //         <div class="flex flex-row justify-between ...">
+  //           <div ...><a href="/series/SLUG/chapter/N">
+  //             <p class="w-[80px]">Chapter N</p>
+  //           </a></div>
+  //           <div class="flex">
+  //             <svg .../>
+  //             <p class="flex items-end text-[12px] ml-2 text-zinc-500">
+  //               Public in <!-- -->4.1<!-- --> hours
+  //             </p>
+  //           </div>
+  //         </div>
+  //       </span>
+  //     </div>
+  //   </div>
+  // </div>
+
   const cards = root.querySelectorAll('.grid.grid-rows-1.grid-cols-12.m-2');
   const results = [];
 
   for (const card of cards) {
-    const titleLink = card.querySelector('a[href^="/series/"]');
+    // col-span-9 contains the title span and chapter rows
+    const contentCol = card.querySelector('.col-span-9');
+    if (!contentCol) continue;
+
+    // Title: the <a> inside the text-[15px] span
+    const titleSpan = contentCol.querySelector('span.text-\\[15px\\]');
+    const titleLink = titleSpan
+      ? titleSpan.querySelector('a[href^="/series/"]')
+      : null;
     if (!titleLink) continue;
 
     const title = titleLink.text.trim();
     const slugFull = titleLink.getAttribute('href').replace('/series/', '').trim();
 
-    // First chapter row = latest chapter
-    const chapterRows = card.querySelectorAll('.flex.flex-row.justify-between');
+    // Chapter rows
+    const chapterRows = contentCol.querySelectorAll('.flex.flex-row.justify-between');
     for (const row of chapterRows) {
       const chapterLink = row.querySelector('a[href*="/chapter/"]');
       if (!chapterLink) continue;
 
-      const timePara = row.querySelector('p');
+      // Chapter text is in <p class="w-[80px]">
+      const chapterPara = chapterLink.querySelector('p.w-\\[80px\\]');
+      const chapterText = chapterPara ? chapterPara.text.trim() : chapterLink.text.trim();
+
+      // Time is in <p class="flex items-end ...text-zinc-500">
+      // Raw HTML: "Public in <!-- -->4.1<!-- --> hours" — strip HTML comments
+      const timePara = row.querySelector('p.text-zinc-500');
       if (!timePara) continue;
 
-      const timeText = timePara.text.trim();
+      // node-html-parser gives us innerHTML with the <!-- --> still in it
+      // strip comment nodes and collapse whitespace
+      const timeText = timePara.innerHTML
+        .replace(/<!--.*?-->/g, '')   // remove React comment nodes
+        .replace(/<[^>]+>/g, '')      // remove any other tags
+        .replace(/\s+/g, ' ')
+        .trim();
 
       results.push({
         title,
         slug: slugFull,
-        chapter: chapterLink.text.trim(),
+        chapter: chapterText,
         time: timeText,
         isUpcoming: timeText.toLowerCase().startsWith('public in'),
       });
@@ -145,6 +191,23 @@ app.get('/updates/esp32', async (req, res) => {
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ ok: 0, e: err.message });
+  }
+});
+
+// Debug: dump a snippet of raw HTML around the first card
+app.get('/debug', async (req, res) => {
+  try {
+    const response = await client.get('https://asuracomic.net/');
+    const html = response.body;
+    // Find first card and show 2000 chars around it
+    const idx = html.indexOf('grid-cols-12 m-2');
+    const snippet = idx > -1 ? html.substring(idx - 50, idx + 2000) : 'MARKER NOT FOUND';
+    // Also show a piece around "Public in"
+    const idx2 = html.indexOf('Public in');
+    const snippet2 = idx2 > -1 ? html.substring(idx2 - 500, idx2 + 200) : 'PUBLIC IN NOT FOUND';
+    res.type('text/plain').send('=== CARD ===\n' + snippet + '\n\n=== PUBLIC IN ===\n' + snippet2);
+  } catch (err) {
+    res.status(500).send(err.message);
   }
 });
 
