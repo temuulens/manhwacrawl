@@ -156,22 +156,44 @@ function parseUpdates(html) {
   return results;
 }
 
-function filterByWatchlist(entries, watchlist) {
-  if (!watchlist || watchlist.length === 0) return entries;
-  return entries.filter(e =>
-    watchlist.some(w => e.slug.toLowerCase().startsWith(w.toLowerCase()))
-  );
+// Parse "X hours ago" / "X days ago" / "X minutes ago" into hours (float).
+// Returns Infinity if it can't be parsed (= too old, exclude).
+function hoursAgo(timeText) {
+  const t = timeText.toLowerCase().trim();
+  const m = t.match(/^([\d.]+)\s*(minute|hour|day)/);
+  if (!m) return Infinity;
+  const val = parseFloat(m[1]);
+  if (m[2].startsWith('minute')) return val / 60;
+  if (m[2].startsWith('hour'))   return val;
+  if (m[2].startsWith('day'))    return val * 24;
+  return Infinity;
 }
 
-// GET /updates?watch=slug1,slug2  (or ?watch=all)
+// Returns true if entry should appear:
+//   - is in the watchlist AND
+//   - is upcoming (not yet public) OR released within last 24 h
+function isRelevant(entry, watchlist) {
+  const inList = watchlist.some(w =>
+    entry.slug.toLowerCase().startsWith(w.toLowerCase())
+  );
+  if (!inList) return false;
+  if (entry.isUpcoming) return true;
+  return hoursAgo(entry.time) <= 24;
+}
+
+// GET /updates  — human-readable JSON
 app.get('/updates', async (req, res) => {
   try {
-    const entries = await fetchHomepage();
-    const filtered = req.query.watch === 'all'
-      ? entries
-      : filterByWatchlist(entries, req.query.watch
+    const all = await fetchHomepage();
+    const watchlist = req.query.watch === 'all'
+      ? null
+      : (req.query.watch
           ? req.query.watch.split(',').map(s => s.trim()).filter(Boolean)
           : DEFAULT_WATCHLIST);
+
+    const filtered = watchlist
+      ? all.filter(e => isRelevant(e, watchlist))
+      : all;
 
     res.json({
       ok: true,
@@ -185,21 +207,27 @@ app.get('/updates', async (req, res) => {
   }
 });
 
-// GET /updates/esp32?watch=slug1,slug2  — compact payload for ESP32
+// GET /updates/esp32  — compact payload for ESP32
+// u field: 1 = upcoming, 2 = released within 24 h
 app.get('/updates/esp32', async (req, res) => {
   try {
-    const entries = await fetchHomepage();
-    const filtered = req.query.watch === 'all'
-      ? entries
-      : filterByWatchlist(entries, req.query.watch
+    const all = await fetchHomepage();
+    const watchlist = req.query.watch === 'all'
+      ? null
+      : (req.query.watch
           ? req.query.watch.split(',').map(s => s.trim()).filter(Boolean)
           : DEFAULT_WATCHLIST);
+
+    const filtered = watchlist
+      ? all.filter(e => isRelevant(e, watchlist))
+      : all;
 
     const compact = filtered.slice(0, 21).map(e => ({
       t:  e.title.substring(0, 22),
       c:  e.chapter.substring(0, 20),
       tm: e.time,
-      u:  e.isUpcoming ? 1 : 0,
+      // 1 = upcoming (not yet public), 2 = released (within 24 h)
+      u:  e.isUpcoming ? 1 : 2,
     }));
 
     res.json({ ok: 1, n: compact.length, d: compact });
