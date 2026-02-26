@@ -1,15 +1,15 @@
-const express = require('express');
-const { parse } = require('node-html-parser');
+import express from 'express';
+import got from 'got';
+import { parse } from 'node-html-parser';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Cache to avoid hammering asuracomic.net
+// Cache - avoid hammering the site
 let cache = { data: null, fetchedAt: 0 };
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-// List of slugs/keywords to watch - configurable via env or query param
-// slug = the part after /series/ (without the hash suffix is fine for matching)
+// Default watchlist - slug prefixes from asuracomic.net/series/SLUG
 const DEFAULT_WATCHLIST = [
   'i-killed-an-academy-player',
   'the-player-hides-his-past',
@@ -18,22 +18,37 @@ const DEFAULT_WATCHLIST = [
   'omniscient-readers-viewpoint',
 ];
 
+// got instance with HTTP/2 + realistic browser headers
+// HTTP/2 is key - Cloudflare lets it through, HTTP/1.1 gets 403
+const client = got.extend({
+  http2: true,
+  headers: {
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'accept-language': 'en-US,en;q=0.9',
+    'accept-encoding': 'gzip, deflate, br',
+    'cache-control': 'max-age=0',
+    'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
+    'sec-fetch-dest': 'document',
+    'sec-fetch-mode': 'navigate',
+    'sec-fetch-site': 'none',
+    'sec-fetch-user': '?1',
+    'upgrade-insecure-requests': '1',
+  },
+  timeout: { request: 15000 },
+  retry: { limit: 2 },
+});
+
 async function fetchHomepage() {
   const now = Date.now();
   if (cache.data && now - cache.fetchedAt < CACHE_TTL_MS) {
     return cache.data;
   }
 
-  const res = await fetch('https://asuracomic.net/', {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml',
-      'Accept-Language': 'en-US,en;q=0.9',
-    },
-  });
-
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const html = await res.text();
+  const response = await client.get('https://asuracomic.net/');
+  const html = response.body;
 
   const entries = parseUpdates(html);
   cache = { data: entries, fetchedAt: now };
@@ -41,39 +56,26 @@ async function fetchHomepage() {
 }
 
 function parseUpdates(html) {
-  // The homepage update list structure (from DOM inspection):
-  // Each card: .grid.grid-rows-1.grid-cols-12.m-2
-  //   col-span-9 div contains:
-  //     <a href="/series/SLUG">Title</a>
-  //     chapter rows: <a href="/series/SLUG/chapter/N">Chapter N</a>
-  //                   <p ...>Public in X hours  OR  X hours ago</p>
-
   const root = parse(html);
 
-  // Find the latest updates section - series cards
+  // Each update card: div.grid.grid-rows-1.grid-cols-12.m-2
+  // Inside: series title link, then chapter rows with time
   const cards = root.querySelectorAll('.grid.grid-rows-1.grid-cols-12.m-2');
-
   const results = [];
 
   for (const card of cards) {
-    // Series title link
     const titleLink = card.querySelector('a[href^="/series/"]');
     if (!titleLink) continue;
 
     const title = titleLink.text.trim();
-    const seriesHref = titleLink.getAttribute('href');
-    // slug = "i-killed-an-academy-player-bb451ab6"
-    const slugFull = seriesHref.replace('/series/', '').trim();
+    const slugFull = titleLink.getAttribute('href').replace('/series/', '').trim();
 
-    // Find all chapter rows inside this card
+    // First chapter row = latest chapter
     const chapterRows = card.querySelectorAll('.flex.flex-row.justify-between');
-
     for (const row of chapterRows) {
       const chapterLink = row.querySelector('a[href*="/chapter/"]');
       if (!chapterLink) continue;
 
-      const chapterText = chapterLink.text.trim();
-      // Time element: "Public in X hours" or "X hours ago" or "X days ago"
       const timePara = row.querySelector('p');
       if (!timePara) continue;
 
@@ -82,19 +84,17 @@ function parseUpdates(html) {
       results.push({
         title,
         slug: slugFull,
-        chapter: chapterText,
-        time: timeText,         // e.g. "Public in 4.5 hours" or "14 hours ago"
+        chapter: chapterLink.text.trim(),
+        time: timeText,
         isUpcoming: timeText.toLowerCase().startsWith('public in'),
       });
-      // Only keep the latest chapter row per series (first one = newest)
-      break;
+      break; // only latest chapter per series
     }
   }
 
   return results;
 }
 
-// Filter entries by watchlist (slug prefix matching)
 function filterByWatchlist(entries, watchlist) {
   if (!watchlist || watchlist.length === 0) return entries;
   return entries.filter(e =>
@@ -102,22 +102,15 @@ function filterByWatchlist(entries, watchlist) {
   );
 }
 
-// ----- Routes -----
-
-// GET /updates?watch=slug1,slug2   (omit watch= to get all)
+// GET /updates?watch=slug1,slug2  (or ?watch=all)
 app.get('/updates', async (req, res) => {
   try {
     const entries = await fetchHomepage();
-
-    let watchlist = DEFAULT_WATCHLIST;
-    if (req.query.watch) {
-      watchlist = req.query.watch.split(',').map(s => s.trim()).filter(Boolean);
-    }
-
-    // 'all' returns everything
     const filtered = req.query.watch === 'all'
       ? entries
-      : filterByWatchlist(entries, watchlist);
+      : filterByWatchlist(entries, req.query.watch
+          ? req.query.watch.split(',').map(s => s.trim()).filter(Boolean)
+          : DEFAULT_WATCHLIST);
 
     res.json({
       ok: true,
@@ -126,49 +119,37 @@ app.get('/updates', async (req, res) => {
       updates: filtered,
     });
   } catch (err) {
-    console.error('Error fetching updates:', err.message);
+    console.error(err.message);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// GET /updates/esp32?watch=slug1,slug2
-// Compact format optimised for small JSON parsing on ESP32
-// Returns max 8 items, short field names
+// GET /updates/esp32?watch=slug1,slug2  — compact payload for ESP32
 app.get('/updates/esp32', async (req, res) => {
   try {
     const entries = await fetchHomepage();
-
-    let watchlist = DEFAULT_WATCHLIST;
-    if (req.query.watch) {
-      watchlist = req.query.watch.split(',').map(s => s.trim()).filter(Boolean);
-    }
-
     const filtered = req.query.watch === 'all'
       ? entries
-      : filterByWatchlist(entries, watchlist);
+      : filterByWatchlist(entries, req.query.watch
+          ? req.query.watch.split(',').map(s => s.trim()).filter(Boolean)
+          : DEFAULT_WATCHLIST);
 
-    // Compact payload: t=title, c=chapter, tm=time, u=isUpcoming
-    // Truncate title to 20 chars to fit display width
     const compact = filtered.slice(0, 8).map(e => ({
-      t: e.title.substring(0, 22),
-      c: e.chapter.substring(0, 20),
+      t:  e.title.substring(0, 22),
+      c:  e.chapter.substring(0, 20),
       tm: e.time,
-      u: e.isUpcoming ? 1 : 0,
+      u:  e.isUpcoming ? 1 : 0,
     }));
 
     res.json({ ok: 1, n: compact.length, d: compact });
   } catch (err) {
+    console.error(err.message);
     res.status(500).json({ ok: 0, e: err.message });
   }
 });
 
-// Health check
-app.get('/', (req, res) => res.json({ status: 'manhwa-tracker running' }));
+app.get('/', (_req, res) => res.json({ status: 'manhwa-tracker running' }));
 
 app.listen(PORT, () => {
-  console.log(`Manhwa tracker running on port ${PORT}`);
-  console.log(`  /updates           - full JSON`);
-  console.log(`  /updates/esp32     - compact JSON for ESP32`);
-  console.log(`  ?watch=slug1,slug2 - filter by series slug prefix`);
-  console.log(`  ?watch=all         - return all series`);
+  console.log(`Manhwa tracker on port ${PORT}`);
 });
