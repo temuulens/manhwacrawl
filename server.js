@@ -11,6 +11,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 // Default watchlist - slug prefixes from asuracomic.net/series/SLUG
 const DEFAULT_WATCHLIST = [
+  'i-killed-an-academy-player',
   'crimson-reset',
   'mount-hua-sects-genius-phantom-swordsman',
   'the-extras-academy-survival-guide',
@@ -178,7 +179,7 @@ function isRelevant(entry, watchlist) {
   );
   if (!inList) return false;
   if (entry.isUpcoming) return true;
-  return hoursAgo(entry.time) <= 24;
+  return hoursAgo(entry.time) <= 48;
 }
 
 // GET /updates  — human-readable JSON
