@@ -94,11 +94,21 @@ function parseUpdates(html) {
     const chapterLink = parentContainer.querySelector('a[href*="/chapter/"]');
     if (!chapterLink) continue;
 
-    // Time is cleanly wrapped in a `<time>` tag
+    // Time is cleanly wrapped in a `<time>` tag for released chapters.
+    // However, upcoming chapters (countdown) use `<span>` instead!
+    let timeText = '';
     const timeElem = chapterLink.querySelector('time');
-    if (!timeElem) continue;
+    if (timeElem) {
+      timeText = timeElem.text.trim();
+    } else {
+      // Find the countdown text in the last span
+      const spans = chapterLink.querySelectorAll('span');
+      if (spans.length > 0) {
+        timeText = spans[spans.length - 1].text.trim();
+      }
+    }
 
-    const timeText = timeElem.text.trim();
+    if (!timeText) continue;
 
     // `chapterLink.text` will contain the chapter text AND the time text, 
     // and sometimes a chapter title (e.g. `Chapter 250 - The Title 22 hours ago`).
@@ -109,13 +119,17 @@ function parseUpdates(html) {
     // Remove the chapter title suffix if " - " exists
     chapterText = chapterText.split(' - ')[0].trim();
 
-    // In SSR html, "isUpcoming" usually has "public in" or similar.
+    // Since "Public in" was removed, upcoming chapters just display a countdown like "5h 5m".
+    // Released chapters always show "ago", "now", "yesterday", or "week".
+    const timeLower = timeText.toLowerCase();
+    const isReleased = timeLower.includes('ago') || timeLower.includes('now') || timeLower.includes('yesterday') || timeLower.includes('week');
+
     results.push({
       title,
       slug: slugFull,
       chapter: chapterText,
       time: timeText,
-      isUpcoming: timeText.toLowerCase().includes('public in'),
+      isUpcoming: !isReleased,
     });
   }
 
