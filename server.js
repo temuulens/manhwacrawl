@@ -73,41 +73,49 @@ async function fetchHomepage() {
 
 function parseUpdates(html) {
   const root = parse(html);
-  const cards = root.querySelectorAll('.p-4.border');
+
+  // In the raw SSR HTML, the elements don't have .p-4.border classes.
+  // Instead, we can just find all the manga title links.
+  const titleLinks = root.querySelectorAll('a.font-bold');
   const results = [];
 
-  for (const card of cards) {
-    // Title and Link
-    const titleLink = card.querySelector('a.font-bold');
-    if (!titleLink) continue;
-
+  for (const titleLink of titleLinks) {
     const href = titleLink.getAttribute('href');
     if (!href || !href.startsWith('/comics/')) continue;
 
     const title = titleLink.text.trim();
-    // Slug: remove '/comics/' from the start
     const slugFull = href.replace('/comics/', '').trim();
 
-    // Chapter rows. A card can contain multiple chapters, we just need the first one (latest).
-    const chapterLink = card.querySelector('a[href*="/chapter/"]');
+    // The chapters are located inside the same parent column as the title.
+    const parentContainer = titleLink.parentNode;
+    if (!parentContainer) continue;
+
+    // We just need the first/latest chapter link
+    const chapterLink = parentContainer.querySelector('a[href*="/chapter/"]');
     if (!chapterLink) continue;
 
-    // Chapter text is typically in a span
-    const chapterSpan = chapterLink.querySelector('span.text-sm');
-    const chapterText = chapterSpan ? chapterSpan.text.trim() : chapterLink.text.trim();
-
-    // Time is in the <time> tag
+    // Time is cleanly wrapped in a `<time>` tag
     const timeElem = chapterLink.querySelector('time');
     if (!timeElem) continue;
 
     const timeText = timeElem.text.trim();
 
+    // `chapterLink.text` will contain the chapter text AND the time text, 
+    // and sometimes a chapter title (e.g. `Chapter 250 - The Title 22 hours ago`).
+    let chapterText = chapterLink.text.trim();
+    if (chapterText.endsWith(timeText)) {
+      chapterText = chapterText.substring(0, chapterText.length - timeText.length).trim();
+    }
+    // Remove the chapter title suffix if " - " exists
+    chapterText = chapterText.split(' - ')[0].trim();
+
+    // In SSR html, "isUpcoming" usually has "public in" or similar.
     results.push({
       title,
       slug: slugFull,
       chapter: chapterText,
       time: timeText,
-      isUpcoming: timeText.toLowerCase().startsWith('public in'),
+      isUpcoming: timeText.toLowerCase().includes('public in'),
     });
   }
 
